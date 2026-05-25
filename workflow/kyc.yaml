@@ -1,0 +1,108 @@
+schemaVersion: "0.1"
+id: kyc-backend-demo
+version: "1.0.0"
+title: KYC backend demo
+description: Profile -> document -> liveness (stub) -> manual review or auto-approve.
+
+initialStepId: collect-profile
+terminalStepIds:
+  - approved
+
+steps:
+  - id: collect-profile
+    kind: human
+    presentationRef: forms/collect-profile@v1
+    inputSchema:
+      type: object
+      required: [fullName, email]
+      properties:
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+    onEnter:
+      - type: stub
+        id: init-applicant
+        params:
+          set:
+            stage: "onboarding"
+
+  - id: document-upload
+    kind: human
+    presentationRef: forms/document-upload@v1
+    inputSchema:
+      type: object
+      required: [documentType, documentRef]
+      properties:
+        documentType:
+          type: string
+        documentRef:
+          type: string
+        review:
+          type: object
+          required: [required]
+          properties:
+            required:
+              type: boolean
+          additionalProperties: false
+      additionalProperties: false
+    onEnter: []
+
+  - id: run-liveness-check
+    kind: action
+    description: Stub simulates vendor liveness (see http-runner for real HTTP).
+    onEnter:
+      - type: stub
+        id: record-liveness-pass
+        params:
+          set:
+            liveness:
+              passed: true
+
+  - id: manual-review
+    kind: human
+    presentationRef: forms/manual-review@v1
+    inputSchema:
+      type: object
+      required: [approved]
+      properties:
+        approved:
+          type: boolean
+        review:
+          type: object
+          required: [approved]
+          properties:
+            approved:
+              type: boolean
+          additionalProperties: false
+      additionalProperties: false
+    onEnter: []
+
+  - id: approved
+    kind: end
+
+transitions:
+  - from: collect-profile
+    to: document-upload
+    priority: 0
+
+  - from: document-upload
+    to: run-liveness-check
+    priority: 0
+
+  # Passport sets review.required; both guards can be true after liveness — lower priority wins (manual review).
+  - from: run-liveness-check
+    to: manual-review
+    priority: 0
+    when: "variables.review.required == true"
+
+  - from: run-liveness-check
+    to: approved
+    priority: 1
+    when: "variables.liveness.passed == true"
+
+  - from: manual-review
+    to: approved
+    priority: 0
+    when: "variables.review.approved == true"
