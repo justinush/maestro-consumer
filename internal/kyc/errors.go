@@ -1,9 +1,14 @@
 package kyc
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/justinush/maestro-consumer/internal/model"
+)
 
 var (
 	ErrWrongStep = errors.New("wrong step")
-	ErrNotFound  = errors.New("applicant: not found")
-	ErrInvalid   = errors.New("invalid input")
+
+	ErrNotFound = model.ErrNotFound
+	ErrInvalid  = model.ErrInvalid
 )

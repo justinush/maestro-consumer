@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/justinush/maestro-consumer/internal/kyc"
+	"github.com/justinush/maestro-consumer/internal/model"
 )
 
 type Postgres struct {
@@ -30,9 +30,9 @@ func (r *Postgres) Create(applicantID, runID string) error {
 	return nil
 }
 
-func (r *Postgres) GetByRunID(runID string) (*kyc.ApplicantRecord, error) {
+func (r *Postgres) GetByRunID(runID string) (*model.ApplicantRecord, error) {
 	var (
-		rec         kyc.ApplicantRecord
+		rec         model.ApplicantRecord
 		profileJSON []byte
 		docsJSON    []byte
 	)
@@ -42,56 +42,56 @@ func (r *Postgres) GetByRunID(runID string) (*kyc.ApplicantRecord, error) {
 		WHERE run_id = $1
 	`, runID).Scan(&rec.ApplicantID, &rec.RunID, &profileJSON, &docsJSON)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("%w: run %q", kyc.ErrNotFound, runID)
+		return nil, fmt.Errorf("%w: run %q", model.ErrNotFound, runID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("applicant get: %w", err)
 	}
 	if string(profileJSON) != "null" {
 		if err := json.Unmarshal(profileJSON, &rec.Profile); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("applicant profile json: %w", err)
 		}
 	}
 	if len(docsJSON) > 0 {
 		if err := json.Unmarshal(docsJSON, &rec.Documents); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("applicant documents json: %w", err)
 		}
 	}
 	return &rec, nil
 }
 
-func (r *Postgres) SaveProfile(runID string, p kyc.Profile) error {
+func (r *Postgres) SaveProfile(runID string, p model.Profile) error {
 	profileJSON, err := json.Marshal(p)
 	if err != nil {
-		return err
+		return fmt.Errorf("profile json: %w", err)
 	}
 	tag, err := r.pool.Exec(context.Background(), `
 		UPDATE applicants SET profile = $2::jsonb WHERE run_id = $1
 	`, runID, profileJSON)
 	if err != nil {
-		return err
+		return fmt.Errorf("save profile: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("%w: run %q", kyc.ErrNotFound, runID)
+		return fmt.Errorf("%w: run %q", model.ErrNotFound, runID)
 	}
 	return nil
 }
 
-func (r *Postgres) AddDocument(runID string, d kyc.Document) error {
-	docJSON, err := json.Marshal(d)
+func (r *Postgres) AddDocument(runID string, d model.Document) error {
+	wrap, err := json.Marshal([]model.Document{d})
 	if err != nil {
-		return err
+		return fmt.Errorf("document json: %w", err)
 	}
 	tag, err := r.pool.Exec(context.Background(), `
 		UPDATE applicants
 		SET documents = documents || $2::jsonb
 		WHERE run_id = $1
-	`, runID, fmt.Sprintf("[%s]", string(docJSON)))
+	`, runID, wrap)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("%w: run %q", kyc.ErrNotFound, runID)
+		return fmt.Errorf("%w: run %q", model.ErrNotFound, runID)
 	}
 	return nil
 }
