@@ -1,10 +1,14 @@
 package applicant
 
-import "github.com/justinush/maestro-consumer/internal/model"
+import (
+	"context"
+
+	"github.com/justinush/maestro-consumer/internal/model"
+)
 
 type Repository interface {
-	Create(applicantID, runID string) error
-	GetByRunID(runID string) (*model.ApplicantRecord, error)
-	SaveProfile(runID string, p model.Profile) error
-	AddDocument(runID string, d model.Document) error
+	Create(ctx context.Context, applicantID, runID string) error
+	GetByRunID(ctx context.Context, runID string) (*model.ApplicantRecord, error)
+	SaveProfile(ctx context.Context, runID string, p model.Profile) error
+	AddDocument(ctx context.Context, runID string, d model.Document) error
 }

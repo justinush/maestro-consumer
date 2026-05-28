@@ -19,8 +19,8 @@ func NewPostgres(pool *pgxpool.Pool) *Postgres {
 	return &Postgres{pool: pool}
 }
 
-func (r *Postgres) Create(applicantID, runID string) error {
-	_, err := r.pool.Exec(context.Background(), `
+func (r *Postgres) Create(ctx context.Context, applicantID, runID string) error {
+	_, err := r.pool.Exec(ctx, `
 		INSERT INTO applicants (applicant_id, run_id, documents)
 		VALUES ($1, $2, '[]'::jsonb)
 	`, applicantID, runID)
@@ -30,13 +30,14 @@ func (r *Postgres) Create(applicantID, runID string) error {
 	return nil
 }
 
-func (r *Postgres) GetByRunID(runID string) (*model.ApplicantRecord, error) {
+func (r *Postgres) GetByRunID(ctx context.Context, runID string) (*model.ApplicantRecord, error) {
 	var (
 		rec         model.ApplicantRecord
 		profileJSON []byte
 		docsJSON    []byte
 	)
-	err := r.pool.QueryRow(context.Background(), `
+
+	err := r.pool.QueryRow(ctx, `
 		SELECT applicant_id, run_id, COALESCE(profile, 'null'::jsonb), documents
 		FROM applicants
 		WHERE run_id = $1
@@ -47,6 +48,7 @@ func (r *Postgres) GetByRunID(runID string) (*model.ApplicantRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("applicant get: %w", err)
 	}
+
 	if string(profileJSON) != "null" {
 		if err := json.Unmarshal(profileJSON, &rec.Profile); err != nil {
 			return nil, fmt.Errorf("applicant profile json: %w", err)
@@ -57,16 +59,20 @@ func (r *Postgres) GetByRunID(runID string) (*model.ApplicantRecord, error) {
 			return nil, fmt.Errorf("applicant documents json: %w", err)
 		}
 	}
+
 	return &rec, nil
 }
 
-func (r *Postgres) SaveProfile(runID string, p model.Profile) error {
+func (r *Postgres) SaveProfile(ctx context.Context, runID string, p model.Profile) error {
 	profileJSON, err := json.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("profile json: %w", err)
 	}
-	tag, err := r.pool.Exec(context.Background(), `
-		UPDATE applicants SET profile = $2::jsonb WHERE run_id = $1
+
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE applicants
+		SET profile = $2::jsonb
+		WHERE run_id = $1
 	`, runID, profileJSON)
 	if err != nil {
 		return fmt.Errorf("save profile: %w", err)
@@ -77,12 +83,13 @@ func (r *Postgres) SaveProfile(runID string, p model.Profile) error {
 	return nil
 }
 
-func (r *Postgres) AddDocument(runID string, d model.Document) error {
+func (r *Postgres) AddDocument(ctx context.Context, runID string, d model.Document) error {
 	wrap, err := json.Marshal([]model.Document{d})
 	if err != nil {
 		return fmt.Errorf("document json: %w", err)
 	}
-	tag, err := r.pool.Exec(context.Background(), `
+
+	tag, err := r.pool.Exec(ctx, `
 		UPDATE applicants
 		SET documents = documents || $2::jsonb
 		WHERE run_id = $1

@@ -48,10 +48,16 @@ func (s *Service) Start(ctx context.Context) (StatusResponse, error) {
 	if err := PersistNewRun(ctx, s.runs, in, s.def); err != nil {
 		return StatusResponse{}, err
 	}
-	if err := s.apps.Create(applicantID, runID); err != nil {
+
+	// NOTE: Transaction boundary:
+	// We persist the workflow run first, then app-owned data.
+	// In a real service, you typically want a single DB transaction that updates
+	// both the workflow run record and app-owned tables, or a retry/compensation strategy.
+	if err := s.apps.Create(ctx, applicantID, runID); err != nil {
 		return StatusResponse{}, err
 	}
-	app, err := s.apps.GetByRunID(runID)
+
+	app, err := s.apps.GetByRunID(ctx, runID)
 	if err != nil {
 		return StatusResponse{}, err
 	}
@@ -59,7 +65,7 @@ func (s *Service) Start(ctx context.Context) (StatusResponse, error) {
 }
 
 func (s *Service) Get(ctx context.Context, runID string) (StatusResponse, error) {
-	app, err := s.apps.GetByRunID(runID)
+	app, err := s.apps.GetByRunID(ctx, runID)
 	if err != nil {
 		return StatusResponse{}, err
 	}
@@ -71,7 +77,7 @@ func (s *Service) Get(ctx context.Context, runID string) (StatusResponse, error)
 }
 
 func (s *Service) GetEvents(ctx context.Context, runID string) (EventsResponse, error) {
-	if _, err := s.apps.GetByRunID(runID); err != nil {
+	if _, err := s.apps.GetByRunID(ctx, runID); err != nil {
 		return EventsResponse{}, err
 	}
 	in, err := RestoreRun(ctx, s.rt, s.runs, runID)
@@ -94,7 +100,7 @@ func (s *Service) SubmitProfile(ctx context.Context, runID string, p Profile) (S
 		"fullName": p.FullName,
 		"email":    p.Email,
 	}, func() error {
-		return s.apps.SaveProfile(runID, p)
+		return s.apps.SaveProfile(ctx, runID, p)
 	})
 }
 
@@ -102,6 +108,8 @@ func (s *Service) SubmitDocument(ctx context.Context, runID string, d Document) 
 	if err := d.Validate(); err != nil {
 		return StatusResponse{}, err
 	}
+
+	// Restore once to check step and run the vendor hook.
 	in, err := RestoreRun(ctx, s.rt, s.runs, runID)
 	if err != nil {
 		return StatusResponse{}, err
@@ -110,20 +118,22 @@ func (s *Service) SubmitDocument(ctx context.Context, runID string, d Document) 
 	if in.CurrentStepID() != want {
 		return StatusResponse{}, fmt.Errorf("%w: want %q, at %q", ErrWrongStep, want, in.CurrentStepID())
 	}
-	app, err := s.apps.GetByRunID(runID)
+
+	app, err := s.apps.GetByRunID(ctx, runID)
 	if err != nil {
 		return StatusResponse{}, err
 	}
 	if err := FakeVendorCheckLiveness(app.ApplicantID); err != nil {
 		return StatusResponse{}, err
 	}
+
 	needsReview := d.Type == "passport"
-	return s.submitOnStep(ctx, runID, want, map[string]any{
+	return s.submitOnExistingInstance(ctx, runID, want, in, map[string]any{
 		"documentType": d.Type,
 		"documentRef":  d.Ref,
 		"review":       map[string]any{"required": needsReview},
 	}, func() error {
-		return s.apps.AddDocument(runID, d)
+		return s.apps.AddDocument(ctx, runID, d)
 	})
 }
 
@@ -144,9 +154,20 @@ func (s *Service) submitOnStep(
 	if err != nil {
 		return StatusResponse{}, err
 	}
+	return s.submitOnExistingInstance(ctx, runID, wantStep, in, input, after)
+}
+
+func (s *Service) submitOnExistingInstance(
+	ctx context.Context,
+	runID, wantStep string,
+	in *engine.Instance,
+	input map[string]any,
+	after afterSuccess,
+) (StatusResponse, error) {
 	if in.CurrentStepID() != wantStep {
 		return StatusResponse{}, fmt.Errorf("%w: want %q, at %q", ErrWrongStep, wantStep, in.CurrentStepID())
 	}
+
 	sub := in.SubmitInput(input)
 	switch sub.Status {
 	case engine.SubmitAdvanced, engine.SubmitStayOnStep:
@@ -155,18 +176,24 @@ func (s *Service) submitOnStep(
 	default:
 		return StatusResponse{}, fmt.Errorf("submit: unexpected status %v", sub.Status)
 	}
+
 	if err := DriveUntilBlocked(in); err != nil {
 		return StatusResponse{}, err
 	}
+
 	if err := SaveRun(ctx, s.runs, runID, in, s.def); err != nil {
 		return StatusResponse{}, err
 	}
+
+	// NOTE: Transaction boundary:
+	// We save workflow state first, then app-owned state. See Start() note above.
 	if after != nil {
 		if err := after(); err != nil {
 			return StatusResponse{}, err
 		}
 	}
-	app, err := s.apps.GetByRunID(runID)
+
+	app, err := s.apps.GetByRunID(ctx, runID)
 	if err != nil {
 		return StatusResponse{}, err
 	}

@@ -10,6 +10,7 @@ Why it exists: examples inside the Maestro repo can accidentally hide sharp edge
 
 - Go 1.26+
 - Docker (for Postgres)
+- jq (optional, for nicer curl output)
 - Maestro repo checked out next to this repo at `../maestro` (used by `go.mod` `replace`)
 
 ---
@@ -119,6 +120,7 @@ curl -s -X POST "$BASE/kyc/$RUN/review" \
 - Implementing `run.Store` outside the Maestro repo (Postgres + JSONB `workflow_runs.state`)
 - The normal embed flow: `pkg/maestro` + `Runtime.RestoreInstance`
 - Persist/restore loop: `run.RecordFromInstance` + revisioned `Save`
+- Note: this demo does **not** wrap workflow + app data writes in a single DB transaction. Production should.
 
 ---
 
