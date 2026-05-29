@@ -12,8 +12,8 @@ import (
 	"github.com/justinush/maestro-consumer/internal/applicant"
 	"github.com/justinush/maestro-consumer/internal/kyc"
 	"github.com/justinush/maestro-consumer/internal/migrate"
-	"github.com/justinush/maestro-consumer/internal/persist"
 	"github.com/justinush/maestro/pkg/maestro"
+	"github.com/justinush/maestro/pkg/run/postgres"
 )
 
 func main() {
@@ -32,6 +32,9 @@ func main() {
 	if err := migrate.Up(ctx, pool, "migrations"); err != nil {
 		log.Fatal(err)
 	}
+	if err := postgres.ApplySchema(ctx, pool); err != nil {
+		log.Fatal(err)
+	}
 
 	rt, err := maestro.Load(workflowPath)
 	if err != nil {
@@ -41,7 +44,7 @@ func main() {
 		fmt.Printf("workflow %q v%q\n", def.ID, def.Version)
 	}
 
-	runStore := persist.NewRunStore(pool)
+	runStore := postgres.NewStore(pool)
 	appRepo := applicant.NewPostgres(pool)
 	svc := kyc.NewService(rt, runStore, appRepo)
 	handler := kyc.NewHandler(svc)

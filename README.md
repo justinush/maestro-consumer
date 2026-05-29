@@ -2,7 +2,7 @@
 
 This is a tiny backend that uses [`github.com/justinush/maestro`](../maestro) the same way a real third-party app would: **separate module**, **REST**, **Postgres**, and **public APIs only**.
 
-Why it exists: examples inside the Maestro repo can accidentally hide sharp edges. This one is meant to smoke out stuff like awkward imports, missing APIs, doc mismatches, or “wow implementing `run.Store` is annoying”.
+Why it exists: examples inside the Maestro repo can accidentally hide sharp edges. This one is meant to smoke out stuff like awkward imports, missing APIs, doc mismatches, or persistence integration gaps before a Maestro release.
 
 ---
 
@@ -25,7 +25,10 @@ go mod tidy
 go run ./cmd/api
 ```
 
-On startup it runs the SQL files in `./migrations`.
+On startup:
+
+1. SQL in `./migrations` — application tables (`applicants`, …)
+2. [`postgres.ApplySchema`](https://pkg.go.dev/github.com/justinush/maestro/pkg/run/postgres#ApplySchema) from Maestro — `workflow_runs` for `run.Store`
 
 ---
 
@@ -109,6 +112,22 @@ curl -s -X POST "$BASE/kyc/$RUN/review" \
 
 ---
 
+## Persistence
+
+| Data | Where |
+|---|---|
+| Workflow runs (`run.Store`) | Maestro `pkg/run/postgres` -> `workflow_runs` |
+| Applicants (demo app data) | `migrations/` -> `applicants` |
+
+```go
+import "github.com/justinush/maestro/pkg/run/postgres"
+
+postgres.ApplySchema(ctx, pool)
+store := postgres.NewStore(pool)
+```
+
+---
+
 ## What this app validates (before Maestro v0.1.0)
 
 - Using Maestro from a totally separate module with:
@@ -117,7 +136,7 @@ curl -s -X POST "$BASE/kyc/$RUN/review" \
   replace github.com/justinush/maestro => ../maestro
   ```
 
-- Implementing `run.Store` outside the Maestro repo (Postgres + JSONB `workflow_runs.state`)
+- Official Postgres persistence: `github.com/justinush/maestro/pkg/run/postgres` (`ApplySchema` + `NewStore`)
 - The normal embed flow: `pkg/maestro` + `Runtime.RestoreInstance`
 - Persist/restore loop: `run.RecordFromInstance` + revisioned `Save`
 - Note: this demo does **not** wrap workflow + app data writes in a single DB transaction. Production should.
@@ -133,5 +152,6 @@ Re-test without the local replace:
 
 ```bash
 go get github.com/justinush/maestro@v0.1.0
+go mod tidy
+go run ./cmd/api
 ```
-
