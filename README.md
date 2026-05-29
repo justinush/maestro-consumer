@@ -28,7 +28,7 @@ go run ./cmd/api
 On startup:
 
 1. SQL in `./migrations` — application tables (`applicants`, …)
-2. [`postgres.ApplySchema`](https://pkg.go.dev/github.com/justinush/maestro/pkg/run/postgres#ApplySchema) from Maestro — `workflow_runs` for `run.Store`
+2. Maestro `postgres.ApplySchema` — `workflow_runs` for `run.Store` (demo convenience; production may copy [`schema.sql`](../maestro/pkg/run/postgres/schema.sql) into migrations instead)
 
 ---
 
@@ -119,12 +119,16 @@ curl -s -X POST "$BASE/kyc/$RUN/review" \
 | Workflow runs (`run.Store`) | Maestro `pkg/run/postgres` -> `workflow_runs` |
 | Applicants (demo app data) | `migrations/` -> `applicants` |
 
+This demo calls `ApplySchema` on startup for simplicity:
+
 ```go
 import "github.com/justinush/maestro/pkg/run/postgres"
 
 postgres.ApplySchema(ctx, pool)
 store := postgres.NewStore(pool)
 ```
+
+In production, you would typically apply the same DDL via your migration tool (`postgres.SchemaDDL()` or a copied `schema.sql`), alongside your app tables.
 
 ---
 
@@ -136,7 +140,7 @@ store := postgres.NewStore(pool)
   replace github.com/justinush/maestro => ../maestro
   ```
 
-- Official Postgres persistence: `github.com/justinush/maestro/pkg/run/postgres` (`ApplySchema` + `NewStore`)
+- Official Postgres persistence: `github.com/justinush/maestro/pkg/run/postgres` (`NewStore`; schema via `ApplySchema` in this demo or your own migrations in prod)
 - The normal embed flow: `pkg/maestro` + `Runtime.RestoreInstance`
 - Persist/restore loop: `run.RecordFromInstance` + revisioned `Save`
 - Note: this demo does **not** wrap workflow + app data writes in a single DB transaction. Production should.
