@@ -1,7 +1,7 @@
 schemaVersion: "0.1"
-id: kyc-backend-demo
+id: kyc.sg.main
 version: "1.0.0"
-title: KYC backend demo
+title: SG Main KYC
 description: Profile -> document -> liveness (stub) -> manual review or auto-approve.
 
 initialStepId: collect-profile
@@ -51,7 +51,6 @@ steps:
 
   - id: run-liveness-check
     kind: action
-    description: Stub simulates vendor liveness (see http-runner for real HTTP).
     onEnter:
       - type: stub
         id: record-liveness-pass
@@ -91,7 +90,6 @@ transitions:
     to: run-liveness-check
     priority: 0
 
-  # Passport sets review.required; both guards can be true after liveness — lower priority wins (manual review).
   - from: run-liveness-check
     to: manual-review
     priority: 0

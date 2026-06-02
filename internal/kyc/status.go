@@ -1,15 +1,22 @@
 package kyc
 
-import "github.com/justinush/maestro/pkg/engine"
+import (
+	"github.com/justinush/maestro/pkg/definition"
+	"github.com/justinush/maestro/pkg/engine"
+)
 
 type StatusResponse struct {
-	RunID       string     `json:"runId"`
-	ApplicantID string     `json:"applicantId"`
-	Status      string     `json:"status"`
-	Step        string     `json:"step"`
-	Terminal    bool       `json:"terminal"`
-	Profile     *Profile   `json:"profile,omitempty"`
-	Documents   []Document `json:"documents,omitempty"`
+	RunID           string     `json:"runId"`
+	ApplicantID     string     `json:"applicantId"`
+	WorkflowID      string     `json:"workflowId,omitempty"`
+	WorkflowVersion string     `json:"workflowVersion,omitempty"`
+	Entity          string     `json:"entity,omitempty"`
+	Flow            string     `json:"flow,omitempty"`
+	Status          string     `json:"status"`
+	Step            string     `json:"step"`
+	Terminal        bool       `json:"terminal"`
+	Profile         *Profile   `json:"profile,omitempty"`
+	Documents       []Document `json:"documents,omitempty"`
 }
 
 type EventsResponse struct {
@@ -33,6 +40,20 @@ func BuildStatus(app *ApplicantRecord, in *engine.Instance, completed bool) Stat
 	if len(app.Documents) > 0 {
 		resp.Documents = app.Documents
 	}
+	return resp
+}
+
+func withWorkflowMeta(resp StatusResponse, def *definition.WorkflowDefinition) StatusResponse {
+	if def != nil {
+		resp.WorkflowID = def.ID
+		resp.WorkflowVersion = def.Version
+	}
+	return resp
+}
+
+func withRouteMeta(resp StatusResponse, entity, flow string) StatusResponse {
+	resp.Entity = entity
+	resp.Flow = flow
 	return resp
 }
 

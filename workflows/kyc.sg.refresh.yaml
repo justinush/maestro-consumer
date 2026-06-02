@@ -1,0 +1,37 @@
+schemaVersion: "0.1"
+id: kyc.sg.refresh
+version: "1.0.0"
+title: SG Refresh
+description: Periodic refresh - profile then complete.
+
+initialStepId: collect-profile
+terminalStepIds:
+  - approved
+
+steps:
+  - id: collect-profile
+    kind: human
+    presentationRef: forms/collect-profile@v1
+    inputSchema:
+      type: object
+      required: [fullName, email]
+      properties:
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+    onEnter:
+      - type: stub
+        id: init-refresh
+        params:
+          set:
+            stage: "refresh"
+
+  - id: approved
+    kind: end
+
+transitions:
+  - from: collect-profile
+    to: approved
+    priority: 0
