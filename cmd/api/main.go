@@ -12,15 +12,16 @@ import (
 	"github.com/justinush/maestro-consumer/internal/applicant"
 	"github.com/justinush/maestro-consumer/internal/kyc"
 	"github.com/justinush/maestro-consumer/internal/migrate"
-	"github.com/justinush/maestro/pkg/maestro"
 	"github.com/justinush/maestro/pkg/run/postgres"
+	"github.com/justinush/maestro/pkg/validate"
+	"github.com/justinush/maestro/pkg/workflow"
 )
 
 func main() {
 	ctx := context.Background()
 
 	dbURL := env("DATABASE_URL", "postgres://maestro:maestro@localhost:5433/maestro_consumer?sslmode=disable")
-	workflowPath := env("WORKFLOW_PATH", "workflow/kyc.yaml")
+	workflowsDir := env("WORKFLOWS_DIR", "workflows")
 	addr := env("ADDR", ":8080")
 
 	pool, err := pgxpool.New(ctx, dbURL)
@@ -36,17 +37,17 @@ func main() {
 		log.Fatal(err)
 	}
 
-	rt, err := maestro.Load(workflowPath)
+	reg, err := workflow.LoadDir(workflowsDir, validate.Options{})
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("load workflows from %q: %v", workflowsDir, err)
 	}
-	if def := rt.Definition(); def != nil {
-		fmt.Printf("workflow %q v%q\n", def.ID, def.Version)
+	for _, key := range reg.List() {
+		fmt.Printf("loaded workflow %q v%q\n", key.ID, key.Version)
 	}
 
 	runStore := postgres.NewStore(pool)
 	appRepo := applicant.NewPostgres(pool)
-	svc := kyc.NewService(rt, runStore, appRepo)
+	svc := kyc.NewService(reg, runStore, appRepo)
 	handler := kyc.NewHandler(svc)
 
 	srv := &http.Server{
@@ -55,7 +56,7 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("maestro-consumer listening on %s", addr)
+	log.Printf("maestro-consumer listening on %s (workflows=%s)", addr, workflowsDir)
 	log.Fatal(srv.ListenAndServe())
 }
 

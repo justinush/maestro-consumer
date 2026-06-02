@@ -8,6 +8,7 @@ import (
 	"github.com/justinush/maestro/pkg/engine"
 	"github.com/justinush/maestro/pkg/maestro"
 	"github.com/justinush/maestro/pkg/run"
+	"github.com/justinush/maestro/pkg/workflow"
 )
 
 func PersistNewRun(ctx context.Context, store run.Store, in *engine.Instance, def *definition.WorkflowDefinition) error {
@@ -36,16 +37,21 @@ func SaveRun(ctx context.Context, store run.Store, runID string, in *engine.Inst
 	return nil
 }
 
-func RestoreRun(ctx context.Context, rt *maestro.Runtime, store run.Store, runID string) (*engine.Instance, error) {
+// RestoreRun loads the run record and restores via workflow.Registry (lookup by rec workflow id/version).
+func RestoreRun(ctx context.Context, reg *workflow.Registry, store run.Store, runID string) (*engine.Instance, *definition.WorkflowDefinition, error) {
 	rec, err := store.Get(ctx, runID)
 	if err != nil {
-		return nil, fmt.Errorf("store get: %w", err)
+		return nil, nil, fmt.Errorf("store get: %w", err)
 	}
-	in, err := rt.RestoreInstance(rec, maestro.InstanceOptions{})
+	in, err := reg.RestoreInstance(rec, maestro.InstanceOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("restore: %w", err)
+		return nil, nil, fmt.Errorf("restore: %w", err)
 	}
-	return in, nil
+	rt, err := reg.Lookup(workflow.Key{ID: rec.WorkflowID, Version: rec.WorkflowVersion})
+	if err != nil {
+		return nil, nil, fmt.Errorf("lookup: %w", err)
+	}
+	return in, rt.Definition(), nil
 }
 
 func DriveUntilBlocked(in *engine.Instance) error {
