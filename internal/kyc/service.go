@@ -9,19 +9,18 @@ import (
 	"github.com/justinush/maestro/pkg/engine"
 	"github.com/justinush/maestro/pkg/maestro"
 	"github.com/justinush/maestro/pkg/run"
+	"github.com/justinush/maestro/pkg/workflow"
 )
 
 type Service struct {
-	rt   *maestro.Runtime
-	def  *definition.WorkflowDefinition
+	reg  *workflow.Registry
 	runs run.Store
 	apps applicant.Repository
 }
 
-func NewService(rt *maestro.Runtime, runs run.Store, apps applicant.Repository) *Service {
+func NewService(reg *workflow.Registry, runs run.Store, apps applicant.Repository) *Service {
 	return &Service{
-		rt:   rt,
-		def:  rt.Definition(),
+		reg:  reg,
 		runs: runs,
 		apps: apps,
 	}
@@ -29,11 +28,19 @@ func NewService(rt *maestro.Runtime, runs run.Store, apps applicant.Repository) 
 
 type afterSuccess func() error
 
-func (s *Service) Start(ctx context.Context) (StatusResponse, error) {
+func (s *Service) Start(ctx context.Context, req StartRequest) (StatusResponse, error) {
+	if err := req.Validate(); err != nil {
+		return StatusResponse{}, err
+	}
+	wfKey, err := LookupRoute(req.Entity, req.Flow)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+
 	applicantID := newID("app")
 	runID := newID("run")
 
-	in, err := s.rt.NewInstance(maestro.InstanceOptions{
+	in, err := s.reg.NewInstance(wfKey, maestro.InstanceOptions{
 		RunID: runID,
 		InitialVariables: map[string]any{
 			"applicantId": applicantID,
@@ -45,14 +52,16 @@ func (s *Service) Start(ctx context.Context) (StatusResponse, error) {
 	if err := DriveUntilBlocked(in); err != nil {
 		return StatusResponse{}, err
 	}
-	if err := PersistNewRun(ctx, s.runs, in, s.def); err != nil {
+
+	rt, err := s.reg.Lookup(wfKey)
+	if err != nil {
 		return StatusResponse{}, err
 	}
+	def := rt.Definition()
 
-	// NOTE: Transaction boundary:
-	// We persist the workflow run first, then app-owned data.
-	// In a real service, you typically want a single DB transaction that updates
-	// both the workflow run record and app-owned tables, or a retry/compensation strategy.
+	if err := PersistNewRun(ctx, s.runs, in, def); err != nil {
+		return StatusResponse{}, err
+	}
 	if err := s.apps.Create(ctx, applicantID, runID); err != nil {
 		return StatusResponse{}, err
 	}
@@ -61,7 +70,10 @@ func (s *Service) Start(ctx context.Context) (StatusResponse, error) {
 	if err != nil {
 		return StatusResponse{}, err
 	}
-	return BuildStatus(app, in, false), nil
+	resp := BuildStatus(app, in, false)
+	resp = withWorkflowMeta(resp, def)
+	resp = withRouteMeta(resp, req.Entity, req.Flow)
+	return resp, nil
 }
 
 func (s *Service) Get(ctx context.Context, runID string) (StatusResponse, error) {
@@ -69,18 +81,19 @@ func (s *Service) Get(ctx context.Context, runID string) (StatusResponse, error)
 	if err != nil {
 		return StatusResponse{}, err
 	}
-	in, err := RestoreRun(ctx, s.rt, s.runs, runID)
+	in, def, err := RestoreRun(ctx, s.reg, s.runs, runID)
 	if err != nil {
 		return StatusResponse{}, err
 	}
-	return BuildStatus(app, in, in.IsTerminal()), nil
+	resp := BuildStatus(app, in, in.IsTerminal())
+	return withWorkflowMeta(resp, def), nil
 }
 
 func (s *Service) GetEvents(ctx context.Context, runID string) (EventsResponse, error) {
 	if _, err := s.apps.GetByRunID(ctx, runID); err != nil {
 		return EventsResponse{}, err
 	}
-	in, err := RestoreRun(ctx, s.rt, s.runs, runID)
+	in, _, err := RestoreRun(ctx, s.reg, s.runs, runID)
 	if err != nil {
 		return EventsResponse{}, err
 	}
@@ -109,8 +122,7 @@ func (s *Service) SubmitDocument(ctx context.Context, runID string, d Document) 
 		return StatusResponse{}, err
 	}
 
-	// Restore once to check step and run the vendor hook.
-	in, err := RestoreRun(ctx, s.rt, s.runs, runID)
+	in, def, err := RestoreRun(ctx, s.reg, s.runs, runID)
 	if err != nil {
 		return StatusResponse{}, err
 	}
@@ -128,7 +140,7 @@ func (s *Service) SubmitDocument(ctx context.Context, runID string, d Document) 
 	}
 
 	needsReview := d.Type == "passport"
-	return s.submitOnExistingInstance(ctx, runID, want, in, map[string]any{
+	return s.submitOnExistingInstance(ctx, runID, want, in, def, map[string]any{
 		"documentType": d.Type,
 		"documentRef":  d.Ref,
 		"review":       map[string]any{"required": needsReview},
@@ -150,17 +162,18 @@ func (s *Service) submitOnStep(
 	input map[string]any,
 	after afterSuccess,
 ) (StatusResponse, error) {
-	in, err := RestoreRun(ctx, s.rt, s.runs, runID)
+	in, def, err := RestoreRun(ctx, s.reg, s.runs, runID)
 	if err != nil {
 		return StatusResponse{}, err
 	}
-	return s.submitOnExistingInstance(ctx, runID, wantStep, in, input, after)
+	return s.submitOnExistingInstance(ctx, runID, wantStep, in, def, input, after)
 }
 
 func (s *Service) submitOnExistingInstance(
 	ctx context.Context,
 	runID, wantStep string,
 	in *engine.Instance,
+	def *definition.WorkflowDefinition,
 	input map[string]any,
 	after afterSuccess,
 ) (StatusResponse, error) {
@@ -180,13 +193,9 @@ func (s *Service) submitOnExistingInstance(
 	if err := DriveUntilBlocked(in); err != nil {
 		return StatusResponse{}, err
 	}
-
-	if err := SaveRun(ctx, s.runs, runID, in, s.def); err != nil {
+	if err := SaveRun(ctx, s.runs, runID, in, def); err != nil {
 		return StatusResponse{}, err
 	}
-
-	// NOTE: Transaction boundary:
-	// We save workflow state first, then app-owned state. See Start() note above.
 	if after != nil {
 		if err := after(); err != nil {
 			return StatusResponse{}, err
@@ -197,5 +206,6 @@ func (s *Service) submitOnExistingInstance(
 	if err != nil {
 		return StatusResponse{}, err
 	}
-	return BuildStatus(app, in, in.IsTerminal()), nil
+	resp := BuildStatus(app, in, in.IsTerminal())
+	return withWorkflowMeta(resp, def), nil
 }

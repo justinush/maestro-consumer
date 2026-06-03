@@ -4,6 +4,8 @@ This is a tiny backend that uses [`github.com/justinush/maestro`](../maestro) th
 
 Why it exists: examples inside the Maestro repo can accidentally hide sharp edges. This one is meant to smoke out stuff like awkward imports, missing APIs, doc mismatches, or persistence integration gaps before a Maestro release.
 
+This demo validates **`pkg/workflow`** ([Maestro workflow registry](https://github.com/justinush/maestro/pull/13), on Maestro **v0.2.0+** / `main`). `go.mod` uses `replace` to `../maestro` until Maestro **v0.2.0** is tagged on the module path.
+
 ---
 
 ## Prerequisites
@@ -29,40 +31,60 @@ On startup:
 
 1. SQL in `./migrations` — application tables (`applicants`, …)
 2. Maestro `postgres.ApplySchema` — `workflow_runs` for `run.Store` (demo convenience; production may copy [`schema.sql`](../maestro/pkg/run/postgres/schema.sql) into migrations instead)
+3. `workflow.LoadDir` loads every `*.yaml` / `*.json` under **`WORKFLOWS_DIR`** (default `workflows/`)
 
 ---
 
 ## Environment variables
 
-- **`DATABASE_URL`**: Postgres connection string  
-  Example: `postgres://maestro:maestro@localhost:5433/maestro_consumer?sslmode=disable`
-- **`ADDR`**: HTTP bind address (default `:8080`)
-- **`WORKFLOW_PATH`**: workflow file path (default `workflow/kyc.yaml`)
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DATABASE_URL` | `postgres://maestro:maestro@localhost:5433/maestro_consumer?sslmode=disable` | Postgres |
+| `ADDR` | `:8080` | HTTP bind address |
+| `WORKFLOWS_DIR` | `workflows` | Directory of workflow definition files |
+
+---
+
+## Workflows and routing
+
+Workflow YAML lives under `workflows/`. Each file’s `id` + `version` is the registry key stored on runs.
+
+Host routing (product keys → workflow) is in `internal/kyc/routes.go`:
+
+| entity | flow | workflow id | Notes |
+|--------|------|-------------|--------|
+| SG | MAIN | `kyc.sg.main` | Full demo graph (profile → document → liveness → …) |
+| SG | REFRESH | `kyc.sg.refresh` | Short assist flow (profile → done) |
+| ID | MAIN | `kyc.id.main` | Same graph as SG main (spike) |
+
+`POST /kyc/start` requires JSON `entity` and `flow` (case-insensitive). Unknown pairs return **400**.
 
 ---
 
 ## API
 
 | Method | Path | Purpose |
-|---|---|---|
-| POST | `/kyc/start` | Start a new run |
+|--------|------|---------|
+| POST | `/kyc/start` | Start a run (`entity`, `flow` in body) |
 | GET | `/kyc/{runID}` | Get status |
 | GET | `/kyc/{runID}/events` | Get run trace events |
 | POST | `/kyc/{runID}/profile` | Submit profile input |
-| POST | `/kyc/{runID}/document` | Submit document input |
-| POST | `/kyc/{runID}/review` | Submit manual review input |
+| POST | `/kyc/{runID}/document` | Submit document input (main flows only) |
+| POST | `/kyc/{runID}/review` | Submit manual review input (main flows only) |
+
+Status JSON includes `workflowId`, `workflowVersion`, and (on start) `entity` / `flow`.
 
 ---
 
-## Try it (happy path)
-
-Start a run and grab the `runId`:
+## Try it (SG main — happy path)
 
 ```bash
 BASE=http://localhost:8080
 
-START=$(curl -s -X POST "$BASE/kyc/start")
-echo "$START"
+START=$(curl -s -X POST "$BASE/kyc/start" \
+  -H 'Content-Type: application/json' \
+  -d '{"entity":"SG","flow":"MAIN"}')
+echo "$START" | jq .
 RUN=$(echo "$START" | jq -r .runId)
 echo "runId=$RUN"
 ```
@@ -90,21 +112,31 @@ curl -s "$BASE/kyc/$RUN" | jq .
 curl -s "$BASE/kyc/$RUN/events" | jq .
 ```
 
+Restart the API and `GET` the same `runId` again — restore goes through `workflow.Registry.RestoreInstance` using the persisted `workflowId` / `workflowVersion`.
+
 ---
 
-## Manual review path
+## SG refresh (short flow)
 
-If you submit `passport`, the workflow pauses on manual review. Try it:
+```bash
+curl -s -X POST "$BASE/kyc/start" \
+  -H 'Content-Type: application/json' \
+  -d '{"entity":"SG","flow":"REFRESH"}' | jq .
+
+# Then POST /kyc/{runId}/profile only — no document/review steps on this graph.
+```
+
+---
+
+## Manual review path (SG / ID main)
+
+If you submit `passport`, the workflow pauses on manual review:
 
 ```bash
 curl -s -X POST "$BASE/kyc/$RUN/document" \
   -H 'Content-Type: application/json' \
   -d '{"documentType":"passport","documentRef":"doc-2"}' | jq .
-```
 
-Then approve:
-
-```bash
 curl -s -X POST "$BASE/kyc/$RUN/review" \
   -H 'Content-Type: application/json' \
   -d '{"approved":true}' | jq .
@@ -115,9 +147,9 @@ curl -s -X POST "$BASE/kyc/$RUN/review" \
 ## Persistence
 
 | Data | Where |
-|---|---|
-| Workflow runs (`run.Store`) | Maestro `pkg/run/postgres` -> `workflow_runs` |
-| Applicants (demo app data) | `migrations/` -> `applicants` |
+|------|--------|
+| Workflow runs (`run.Store`) | Maestro `pkg/run/postgres` → `workflow_runs` |
+| Applicants (demo app data) | `migrations/` → `applicants` |
 
 This demo calls `ApplySchema` on startup for simplicity:
 
@@ -128,34 +160,36 @@ postgres.ApplySchema(ctx, pool)
 store := postgres.NewStore(pool)
 ```
 
-In production, you would typically apply the same DDL via your migration tool (`postgres.SchemaDDL()` or a copied `schema.sql`), alongside your app tables.
+In production, apply the same DDL via your migration tool (`postgres.SchemaDDL()` or a copied `schema.sql`), alongside your app tables.
 
 ---
 
-## What this app validates (before Maestro v0.1.0)
+## What this app validates
 
-- Using Maestro from a totally separate module with:
+**Multi-workflow validation**
 
-  ```go
-  replace github.com/justinush/maestro => ../maestro
-  ```
+- `workflow.LoadDir` at startup — fail-fast if any file is invalid or keys collide
+- Host route map → `workflow.Key` → `reg.NewInstance` / `reg.RestoreInstance`
+- Dot workflow ids (`kyc.sg.main`, …) on `RunRecord` and API responses
+- Single-workflow `maestro.Load` path unchanged in Maestro; this app uses the registry pattern only
 
-- Official Postgres persistence: `github.com/justinush/maestro/pkg/run/postgres` (`NewStore`; schema via `ApplySchema` in this demo or your own migrations in prod)
-- The normal embed flow: `pkg/maestro` + `Runtime.RestoreInstance`
-- Persist/restore loop: `run.RecordFromInstance` + revisioned `Save`
-- Note: this demo does **not** wrap workflow + app data writes in a single DB transaction. Production should.
+**Embedding (ongoing)**
+
+- Separate module with `replace github.com/justinush/maestro => ../maestro`
+- Postgres `run.Store` + `RecordFromInstance` / revisioned `Save`
+- This demo does **not** wrap workflow + app data in one DB transaction — production should
 
 ---
 
-## After tagging Maestro v0.1.0
-
-Re-test without the local replace:
+## After Maestro v0.2.0 is tagged
 
 1. Remove the `replace` line from `go.mod`
-2. Fetch the tag:
+2. Pin the module:
 
 ```bash
-go get github.com/justinush/maestro@v0.1.0
+go get github.com/justinush/maestro@v0.2.0
 go mod tidy
 go run ./cmd/api
 ```
+
+3. Re-run the curl flows above

@@ -8,6 +8,7 @@ import (
 
 	"github.com/justinush/maestro/pkg/engine"
 	"github.com/justinush/maestro/pkg/run"
+	"github.com/justinush/maestro/pkg/workflow"
 )
 
 type Handler struct {
@@ -30,7 +31,12 @@ func (h *Handler) Routes() http.Handler {
 }
 
 func (h *Handler) handleStart(w http.ResponseWriter, r *http.Request) {
-	resp, err := h.svc.Start(r.Context())
+	var body StartRequest
+	if err := decodeJSON(r, &body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	resp, err := h.svc.Start(r.Context(), body)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -131,13 +137,14 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, run.ErrNotFound), errors.Is(err, ErrNotFound):
 		http.Error(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, workflow.ErrNotFound):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, ErrUnknownRoute), errors.Is(err, ErrInvalid):
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, ErrWrongStep):
 		http.Error(w, err.Error(), http.StatusConflict)
-	case errors.Is(err, ErrInvalid):
-		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
-		var iv *engine.InputValidationError
-		if errors.As(err, &iv) {
+		if _, ok := errors.AsType[*engine.InputValidationError](err); ok {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
