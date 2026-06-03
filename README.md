@@ -4,6 +4,8 @@ This is a tiny backend that uses [`github.com/justinush/maestro`](../maestro) th
 
 Why it exists: examples inside the Maestro repo can accidentally hide sharp edges. This one is meant to smoke out stuff like awkward imports, missing APIs, doc mismatches, or persistence integration gaps before a Maestro release.
 
+This demo validates **`pkg/workflow`** ([Maestro workflow registry](https://github.com/justinush/maestro/pull/13), on Maestro **v0.2.0+** / `main`). `go.mod` uses `replace` to `../maestro` until Maestro **v0.2.0** is tagged on the module path.
+
 ---
 
 ## Prerequisites
@@ -164,7 +166,7 @@ In production, apply the same DDL via your migration tool (`postgres.SchemaDDL()
 
 ## What this app validates
 
-**Multi-workflow (v0.2 spike)**
+**Multi-workflow validation**
 
 - `workflow.LoadDir` at startup — fail-fast if any file is invalid or keys collide
 - Host route map → `workflow.Key` → `reg.NewInstance` / `reg.RestoreInstance`
