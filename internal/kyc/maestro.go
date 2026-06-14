@@ -38,12 +38,18 @@ func SaveRun(ctx context.Context, store run.Store, runID string, in *engine.Inst
 }
 
 // RestoreRun loads the run record and restores via workflow.Registry (lookup by rec workflow id/version).
-func RestoreRun(ctx context.Context, reg *workflow.Registry, store run.Store, runID string) (*engine.Instance, *definition.WorkflowDefinition, error) {
+func RestoreRun(
+	ctx context.Context,
+	reg *workflow.Registry,
+	store run.Store,
+	runID string,
+	opts maestro.InstanceOptions,
+) (*engine.Instance, *definition.WorkflowDefinition, error) {
 	rec, err := store.Get(ctx, runID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("store get: %w", err)
 	}
-	in, err := reg.RestoreInstance(rec, maestro.InstanceOptions{})
+	in, err := reg.RestoreInstance(rec, opts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("restore: %w", err)
 	}

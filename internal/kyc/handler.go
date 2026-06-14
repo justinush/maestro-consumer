@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/justinush/maestro-consumer/internal/vendor"
 	"github.com/justinush/maestro/pkg/engine"
 	"github.com/justinush/maestro/pkg/run"
 	"github.com/justinush/maestro/pkg/workflow"
@@ -27,6 +28,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /kyc/{runID}/profile", h.handleProfile)
 	mux.HandleFunc("POST /kyc/{runID}/document", h.handleDocument)
 	mux.HandleFunc("POST /kyc/{runID}/review", h.handleReview)
+	mux.HandleFunc("POST /webhooks/vendor", h.handleVendorWebhook)
 	return mux
 }
 
@@ -110,6 +112,20 @@ func (h *Handler) handleReview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (h *Handler) handleVendorWebhook(w http.ResponseWriter, r *http.Request) {
+	var body VendorWebhookRequest
+	if err := decodeJSON(r, &body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	resp, err := h.svc.HandleVendorWebhook(r.Context(), body)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func decodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -135,7 +151,9 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, run.ErrNotFound), errors.Is(err, ErrNotFound):
+	case errors.Is(err, run.ErrNotFound),
+		errors.Is(err, ErrNotFound),
+		errors.Is(err, vendor.ErrNotFound):
 		http.Error(w, err.Error(), http.StatusNotFound)
 	case errors.Is(err, workflow.ErrNotFound):
 		http.Error(w, err.Error(), http.StatusNotFound)

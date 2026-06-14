@@ -5,25 +5,6 @@ import (
 	"github.com/justinush/maestro/pkg/engine"
 )
 
-type StatusResponse struct {
-	RunID           string     `json:"runId"`
-	ApplicantID     string     `json:"applicantId"`
-	WorkflowID      string     `json:"workflowId,omitempty"`
-	WorkflowVersion string     `json:"workflowVersion,omitempty"`
-	Entity          string     `json:"entity,omitempty"`
-	Flow            string     `json:"flow,omitempty"`
-	Status          string     `json:"status"`
-	Step            string     `json:"step"`
-	Terminal        bool       `json:"terminal"`
-	Profile         *Profile   `json:"profile,omitempty"`
-	Documents       []Document `json:"documents,omitempty"`
-}
-
-type EventsResponse struct {
-	RunID  string   `json:"runId"`
-	Events []string `json:"events"`
-}
-
 func BuildStatus(app *ApplicantRecord, in *engine.Instance, completed bool) StatusResponse {
 	step := in.CurrentStepID()
 	resp := StatusResponse{
@@ -70,6 +51,8 @@ func mapStepToStatus(stepID string, terminal bool) string {
 		return "processing_liveness"
 	case "manual-review":
 		return "awaiting_review"
+	case "wait-vendor-result":
+		return "awaiting_vendor_callback"
 	default:
 		return "in_progress"
 	}
