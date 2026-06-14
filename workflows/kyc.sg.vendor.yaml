@@ -1,0 +1,47 @@
+schemaVersion: "0.1"
+id: kyc.sg.vendor
+version: "1.0.0"
+title: SG Vendor async demo
+description: Bridge validation - create vendor session then resume step until webhook.
+
+initialStepId: create-verification
+terminalStepIds:
+  - approved
+
+steps:
+  - id: create-verification
+    kind: action
+    description: Outbound create completes in host after this step.
+    onEnter:
+      - type: stub
+        id: mark-create-started
+        params:
+          set:
+            vendorCreate: true
+
+  - id: wait-vendor-result
+    kind: human
+    presentationRef: internal/wait-vendor@v1
+    description: Resume step - blocks until vendor webhook delivers result.
+    inputSchema:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+        externalRef:
+          type: string
+      additionalProperties: false
+
+  - id: approved
+    kind: end
+
+transitions:
+  - from: create-verification
+    to: wait-vendor-result
+    priority: 0
+
+  - from: wait-vendor-result
+    to: approved
+    priority: 0
+    when: "variables.status == 'approved'"

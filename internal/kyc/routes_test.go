@@ -34,3 +34,15 @@ func TestLookupRoute_empty(t *testing.T) {
 		t.Fatalf("want ErrInvalid, got %v", err)
 	}
 }
+
+func TestLookupRoute_vendor(t *testing.T) {
+	t.Parallel()
+	key, err := LookupRoute("sg", "vendor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := workflow.Key{ID: "kyc.sg.vendor", Version: "1.0.0"}
+	if key != want {
+		t.Fatalf("got %#v, want %#v", key, want)
+	}
+}
