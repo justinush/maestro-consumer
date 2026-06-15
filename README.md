@@ -29,7 +29,7 @@ go run ./cmd/api
 
 On startup:
 
-1. SQL in `./migrations` — application tables (`applicants`, …)
+1. SQL in `./migrations` — application tables (`applicants`, `vendor_sessions`, …)
 2. Maestro `postgres.ApplySchema` — `workflow_runs` for `run.Store` (demo convenience; production may copy [`schema.sql`](../maestro/pkg/run/postgres/schema.sql) into migrations instead)
 3. `workflow.LoadDir` loads every `*.yaml` / `*.json` under **`WORKFLOWS_DIR`** (default `workflows/`)
 
@@ -55,6 +55,7 @@ Host routing (product keys → workflow) is in `internal/kyc/routes.go`:
 |--------|------|-------------|--------|
 | SG | MAIN | `kyc.sg.main` | Full demo graph (profile → document → liveness → …) |
 | SG | REFRESH | `kyc.sg.refresh` | Short assist flow (profile → done) |
+| SG | VENDOR | `kyc.sg.vendor` | Async callback bridge (create → resume step → webhook) |
 | ID | MAIN | `kyc.id.main` | Same graph as SG main (spike) |
 
 `POST /kyc/start` requires JSON `entity` and `flow` (case-insensitive). Unknown pairs return **400**.
@@ -71,8 +72,9 @@ Host routing (product keys → workflow) is in `internal/kyc/routes.go`:
 | POST | `/kyc/{runID}/profile` | Submit profile input |
 | POST | `/kyc/{runID}/document` | Submit document input (main flows only) |
 | POST | `/kyc/{runID}/review` | Submit manual review input (main flows only) |
+| POST | `/webhooks/vendor` | Vendor callback (vendor flow only) |
 
-Status JSON includes `workflowId`, `workflowVersion`, and (on start) `entity` / `flow`.
+Status JSON includes `workflowId`, `workflowVersion`, and (on start) `entity` / `flow`. Vendor runs also include `externalRef` while blocked on the resume step.
 
 ---
 
@@ -128,6 +130,40 @@ curl -s -X POST "$BASE/kyc/start" \
 
 ---
 
+## Try it (SG vendor — async callback bridge)
+
+This flow spikes the Maestro [async callbacks bridge](https://github.com/justinush/maestro/blob/main/docs/design/async-callbacks.md): outbound create → human resume step → webhook → `SubmitInput`, with **no Maestro engine changes**.
+
+The workflow YAML stays v0.1–compliant (`stub` on create, `presentationRef` on resume). Idempotent vendor session creation runs in the host after `DriveUntilBlocked` (`internal/kyc/vendor_flow.go`).
+
+```bash
+BASE=http://localhost:8080
+
+START=$(curl -s -X POST "$BASE/kyc/start" \
+  -H 'Content-Type: application/json' \
+  -d '{"entity":"SG","flow":"VENDOR"}')
+echo "$START" | jq .
+RUN=$(echo "$START" | jq -r .runId)
+REF=$(echo "$START" | jq -r .externalRef)
+echo "runId=$RUN externalRef=$REF"
+```
+
+Expect `status: awaiting_vendor_callback`, `step: wait-vendor-result`, and a non-empty `externalRef`.
+
+Simulate the vendor callback:
+
+```bash
+curl -s -X POST "$BASE/webhooks/vendor" \
+  -H 'Content-Type: application/json' \
+  -d "{\"externalRef\":\"$REF\",\"status\":\"approved\",\"eventId\":\"evt-1\"}" | jq .
+```
+
+Expect terminal `approved`. Replaying the same `eventId` is idempotent (same terminal state, no double transition).
+
+Unknown `externalRef` returns **404**.
+
+---
+
 ## Manual review path (SG / ID main)
 
 If you submit `passport`, the workflow pauses on manual review:
@@ -150,6 +186,7 @@ curl -s -X POST "$BASE/kyc/$RUN/review" \
 |------|--------|
 | Workflow runs (`run.Store`) | Maestro `pkg/run/postgres` → `workflow_runs` |
 | Applicants (demo app data) | `migrations/` → `applicants` |
+| Vendor callback mapping | `migrations/002_vendor_sessions.sql` → `vendor_sessions`, `webhook_events` |
 
 This demo calls `ApplySchema` on startup for simplicity:
 
@@ -173,6 +210,13 @@ In production, apply the same DDL via your migration tool (`postgres.SchemaDDL()
 - Dot workflow ids (`kyc.sg.main`, …) on `RunRecord` and API responses
 - Single-workflow `maestro.Load` path unchanged in Maestro; this app uses the registry pattern only
 
+**Async callback bridge (vendor spike)**
+
+- `kyc.sg.vendor` workflow: action create step → human resume step → end
+- Host-owned `vendor_sessions` maps `externalRef` → `(runId, expectedStepId)` for webhook routing
+- `POST /webhooks/vendor` → `SubmitInput` on the blocked step; `eventId` deduplication for vendor redelivery
+- Covered by `TestVendorWebhook_BridgeHappyPath` in `internal/kyc/service_vendor_test.go`
+
 **Embedding (ongoing)**
 
 - Separate module with `replace github.com/justinush/maestro => ../maestro`
@@ -192,4 +236,4 @@ go mod tidy
 go run ./cmd/api
 ```
 
-3. Re-run the curl flows above
+3. Re-run the curl flows above (main, refresh, and vendor)
