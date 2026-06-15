@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/justinush/maestro-consumer/internal/applicant"
+	"github.com/justinush/maestro-consumer/internal/vendor"
 	"github.com/justinush/maestro/pkg/definition"
 	"github.com/justinush/maestro/pkg/engine"
 	"github.com/justinush/maestro/pkg/maestro"
@@ -13,17 +14,38 @@ import (
 )
 
 type Service struct {
-	reg  *workflow.Registry
-	runs run.Store
-	apps applicant.Repository
+	reg       *workflow.Registry
+	runs      run.Store
+	apps      applicant.Repository
+	vendor    vendor.Store
+	actionReg *engine.Registry
 }
 
-func NewService(reg *workflow.Registry, runs run.Store, apps applicant.Repository) *Service {
+func NewService(
+	reg *workflow.Registry,
+	runs run.Store,
+	apps applicant.Repository,
+	vendorStore vendor.Store,
+	actionReg *engine.Registry,
+) *Service {
 	return &Service{
-		reg:  reg,
-		runs: runs,
-		apps: apps,
+		reg:       reg,
+		runs:      runs,
+		apps:      apps,
+		vendor:    vendorStore,
+		actionReg: actionReg,
 	}
+}
+
+func (s *Service) instanceOpts(runID string, initial map[string]any) maestro.InstanceOptions {
+	opts := maestro.InstanceOptions{ActionRegistry: s.actionReg}
+	if runID != "" {
+		opts.RunID = runID
+	}
+	if initial != nil {
+		opts.InitialVariables = initial
+	}
+	return opts
 }
 
 type afterSuccess func() error
@@ -40,16 +62,16 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (StatusResponse, 
 	applicantID := newID("app")
 	runID := newID("run")
 
-	in, err := s.reg.NewInstance(wfKey, maestro.InstanceOptions{
-		RunID: runID,
-		InitialVariables: map[string]any{
-			"applicantId": applicantID,
-		},
-	})
+	in, err := s.reg.NewInstance(wfKey, s.instanceOpts(runID, map[string]any{
+		"applicantId": applicantID,
+	}))
 	if err != nil {
 		return StatusResponse{}, err
 	}
 	if err := DriveUntilBlocked(in); err != nil {
+		return StatusResponse{}, err
+	}
+	if err := s.registerVendorSession(ctx, wfKey, runID, in); err != nil {
 		return StatusResponse{}, err
 	}
 
@@ -71,6 +93,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (StatusResponse, 
 		return StatusResponse{}, err
 	}
 	resp := BuildStatus(app, in, false)
+	resp = s.enrichExternalRef(ctx, resp, runID)
 	resp = withWorkflowMeta(resp, def)
 	resp = withRouteMeta(resp, req.Entity, req.Flow)
 	return resp, nil
@@ -81,11 +104,12 @@ func (s *Service) Get(ctx context.Context, runID string) (StatusResponse, error)
 	if err != nil {
 		return StatusResponse{}, err
 	}
-	in, def, err := RestoreRun(ctx, s.reg, s.runs, runID)
+	in, def, err := s.restore(ctx, runID)
 	if err != nil {
 		return StatusResponse{}, err
 	}
 	resp := BuildStatus(app, in, in.IsTerminal())
+	resp = s.enrichExternalRef(ctx, resp, runID)
 	return withWorkflowMeta(resp, def), nil
 }
 
@@ -93,7 +117,7 @@ func (s *Service) GetEvents(ctx context.Context, runID string) (EventsResponse, 
 	if _, err := s.apps.GetByRunID(ctx, runID); err != nil {
 		return EventsResponse{}, err
 	}
-	in, _, err := RestoreRun(ctx, s.reg, s.runs, runID)
+	in, _, err := s.restore(ctx, runID)
 	if err != nil {
 		return EventsResponse{}, err
 	}
@@ -122,7 +146,7 @@ func (s *Service) SubmitDocument(ctx context.Context, runID string, d Document) 
 		return StatusResponse{}, err
 	}
 
-	in, def, err := RestoreRun(ctx, s.reg, s.runs, runID)
+	in, def, err := s.restore(ctx, runID)
 	if err != nil {
 		return StatusResponse{}, err
 	}
@@ -156,13 +180,17 @@ func (s *Service) SubmitReview(ctx context.Context, runID string, approved bool)
 	}, nil)
 }
 
+func (s *Service) restore(ctx context.Context, runID string) (*engine.Instance, *definition.WorkflowDefinition, error) {
+	return RestoreRun(ctx, s.reg, s.runs, runID, s.instanceOpts("", nil))
+}
+
 func (s *Service) submitOnStep(
 	ctx context.Context,
 	runID, wantStep string,
 	input map[string]any,
 	after afterSuccess,
 ) (StatusResponse, error) {
-	in, def, err := RestoreRun(ctx, s.reg, s.runs, runID)
+	in, def, err := s.restore(ctx, runID)
 	if err != nil {
 		return StatusResponse{}, err
 	}
@@ -207,5 +235,6 @@ func (s *Service) submitOnExistingInstance(
 		return StatusResponse{}, err
 	}
 	resp := BuildStatus(app, in, in.IsTerminal())
+	resp = s.enrichExternalRef(ctx, resp, runID)
 	return withWorkflowMeta(resp, def), nil
 }

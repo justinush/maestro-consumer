@@ -15,6 +15,7 @@ type RouteKey struct {
 var routes = map[RouteKey]workflow.Key{
 	{"SG", "MAIN"}:    {ID: "kyc.sg.main", Version: "1.0.0"},
 	{"SG", "REFRESH"}: {ID: "kyc.sg.refresh", Version: "1.0.0"},
+	{"SG", "VENDOR"}:  {ID: "kyc.sg.vendor", Version: "1.0.0"},
 	{"ID", "MAIN"}:    {ID: "kyc.id.main", Version: "1.0.0"},
 }
 

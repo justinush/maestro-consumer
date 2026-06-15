@@ -12,6 +12,7 @@ import (
 	"github.com/justinush/maestro-consumer/internal/applicant"
 	"github.com/justinush/maestro-consumer/internal/kyc"
 	"github.com/justinush/maestro-consumer/internal/migrate"
+	"github.com/justinush/maestro-consumer/internal/vendor"
 	"github.com/justinush/maestro/pkg/run/postgres"
 	"github.com/justinush/maestro/pkg/validate"
 	"github.com/justinush/maestro/pkg/workflow"
@@ -47,7 +48,10 @@ func main() {
 
 	runStore := postgres.NewStore(pool)
 	appRepo := applicant.NewPostgres(pool)
-	svc := kyc.NewService(reg, runStore, appRepo)
+	vendorStore := vendor.NewPostgres(pool)
+	actionReg := kyc.NewActionRegistry()
+
+	svc := kyc.NewService(reg, runStore, appRepo, vendorStore, actionReg)
 	handler := kyc.NewHandler(svc)
 
 	srv := &http.Server{
