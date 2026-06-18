@@ -31,7 +31,7 @@ On startup:
 
 1. SQL in `./migrations` — application tables (`applicants`, `vendor_sessions`, …)
 2. Maestro `postgres.ApplySchema` — `workflow_runs` for `run.Store` (demo convenience; production may copy [`schema.sql`](../maestro/pkg/run/postgres/schema.sql) into migrations instead)
-3. `workflow.LoadDir` loads every `*.yaml` / `*.json` under **`WORKFLOWS_DIR`** (default `workflows/`)
+3. `workflow.LoadDir` loads every `*.yaml` / `*.json` under **`WORKFLOWS_DIR`** (default `workflows/`), with `kyc.WorkflowValidateOptions()` so custom action types in YAML pass validation
 
 ---
 
@@ -134,7 +134,7 @@ curl -s -X POST "$BASE/kyc/start" \
 
 This flow spikes the Maestro [async callbacks bridge](https://github.com/justinush/maestro/blob/main/docs/design/async-callbacks.md): outbound create → human resume step → webhook → `SubmitInput`, with **no Maestro engine changes**.
 
-The workflow YAML stays v0.1–compliant (`stub` on create, `presentationRef` on resume). Idempotent vendor session creation runs in the host after `DriveUntilBlocked` (`internal/kyc/vendor_flow.go`).
+The create step uses custom action type `vendor-create-session` in YAML — allowed via `kyc.WorkflowValidateOptions()` and registered on `engine.Registry` in `kyc.NewActionRegistry`. See Maestro [custom action types](../maestro/docs/design/custom-actions.md). The resume step uses placeholder `presentationRef: internal/wait-vendor@v1` (webhook-only).
 
 ```bash
 BASE=http://localhost:8080
@@ -212,10 +212,16 @@ In production, apply the same DDL via your migration tool (`postgres.SchemaDDL()
 
 **Async callback bridge (vendor spike)**
 
-- `kyc.sg.vendor` workflow: action create step → human resume step → end
+- `kyc.sg.vendor` workflow: `vendor-create-session` action create → human resume step → end
 - Host-owned `vendor_sessions` maps `externalRef` → `(runId, expectedStepId)` for webhook routing
 - `POST /webhooks/vendor` → `SubmitInput` on the blocked step; `eventId` deduplication for vendor redelivery
 - Covered by `TestVendorWebhook_BridgeHappyPath` in `internal/kyc/service_vendor_test.go`
+
+**Custom action types (Maestro v0.2.x)**
+
+- `workflow.LoadDir(..., kyc.WorkflowValidateOptions())` allows `vendor-create-session` in YAML
+- `kyc.NewActionRegistry(vendorStore)` registers the matching `engine.ActionRunner` — graph and runtime stay aligned
+- `TestWorkflowLoad_*` in `internal/kyc/workflow_load_test.go` — fails without allowlist, passes with it
 
 **Embedding (ongoing)**
 

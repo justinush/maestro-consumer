@@ -11,13 +11,10 @@ terminalStepIds:
 steps:
   - id: create-verification
     kind: action
-    description: Outbound create completes in host after this step.
+    description: Outbound create via app-owned vendor-create-session action.
     onEnter:
-      - type: stub
-        id: mark-create-started
-        params:
-          set:
-            vendorCreate: true
+      - type: vendor-create-session
+        id: create-vendor
 
   - id: wait-vendor-result
     kind: human
