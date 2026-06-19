@@ -71,9 +71,6 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (StatusResponse, 
 	if err := DriveUntilBlocked(in); err != nil {
 		return StatusResponse{}, err
 	}
-	if err := s.registerVendorSession(ctx, wfKey, runID, in); err != nil {
-		return StatusResponse{}, err
-	}
 
 	rt, err := s.reg.Lookup(wfKey)
 	if err != nil {

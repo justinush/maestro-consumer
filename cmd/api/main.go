@@ -49,7 +49,7 @@ func main() {
 	runStore := postgres.NewStore(pool)
 	appRepo := applicant.NewPostgres(pool)
 	vendorStore := vendor.NewPostgres(pool)
-	actionReg := kyc.NewActionRegistry()
+	actionReg := kyc.NewActionRegistry(vendorStore)
 
 	svc := kyc.NewService(reg, runStore, appRepo, vendorStore, actionReg)
 	handler := kyc.NewHandler(svc)

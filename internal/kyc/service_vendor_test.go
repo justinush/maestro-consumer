@@ -9,7 +9,6 @@ import (
 	"github.com/justinush/maestro-consumer/internal/kyc"
 	"github.com/justinush/maestro-consumer/internal/vendor"
 	"github.com/justinush/maestro/pkg/run"
-	"github.com/justinush/maestro/pkg/validate"
 	"github.com/justinush/maestro/pkg/workflow"
 )
 
@@ -19,13 +18,13 @@ func TestVendorWebhook_BridgeHappyPath(t *testing.T) {
 
 	root := filepath.Join("..", "..")
 	wfDir := filepath.Join(root, "workflows")
-	reg, err := workflow.LoadDir(wfDir, validate.Options{})
+	reg, err := workflow.LoadDir(wfDir, kyc.WorkflowValidateOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	vendorStore := vendor.NewMemory()
-	actionReg := kyc.NewActionRegistry()
+	actionReg := kyc.NewActionRegistry(vendorStore)
 	runs := run.NewMemoryStore()
 	apps := applicant.NewMemory()
 
