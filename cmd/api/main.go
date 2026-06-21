@@ -14,7 +14,6 @@ import (
 	"github.com/justinush/maestro-consumer/internal/migrate"
 	"github.com/justinush/maestro-consumer/internal/vendor"
 	"github.com/justinush/maestro/pkg/run/postgres"
-	"github.com/justinush/maestro/pkg/validate"
 	"github.com/justinush/maestro/pkg/workflow"
 )
 
@@ -38,7 +37,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	reg, err := workflow.LoadDir(workflowsDir, validate.Options{})
+	reg, err := workflow.LoadDir(workflowsDir, kyc.WorkflowValidateOptions())
 	if err != nil {
 		log.Fatalf("load workflows from %q: %v", workflowsDir, err)
 	}
